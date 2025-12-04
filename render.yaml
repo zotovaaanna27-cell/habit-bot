@@ -1,0 +1,12 @@
+﻿services:
+  - type: web
+    name: habit-tracker-bot
+    env: python
+    plan: free
+    buildCommand: ""
+    startCommand: "python bot.py"
+    envVars:
+      - key: TELEGRAM_TOKEN
+        sync: false
+      - key: WEBHOOK_BASE_URL
+        sync: false
