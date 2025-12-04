@@ -4,26 +4,21 @@ from datetime import datetime, timedelta
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
-    Application,
     ApplicationBuilder,
+    Application,
     CommandHandler,
     ContextTypes,
     CallbackQueryHandler,
 )
 
-# --- ЛОГИРОВАНИЕ ---
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
 
-# --- НАСТРОЙКИ ---
-
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-WEBHOOK_BASE_URL = os.getenv("WEBHOOK_BASE_URL")  # например: https://your-service.onrender.com
 
-# Привычки
 HABITS = {
     "water": "Пить воду 💧",
     "reading": "Читать 📚",
@@ -31,21 +26,17 @@ HABITS = {
     "selfcare": "Что-то приятное себе 💛",
 }
 
-# Хранилище состояния (для одного пользователя, локально в памяти)
 user_state = {
-    "habits": [],        # список habit_id
-    "logs": [],          # список dict: {date: 'YYYY-MM-DD', habit_id: str, status: 'done'|'skipped'}
+    "habits": [],
+    "logs": [],
 }
 
-
-# --- УТИЛИТЫ ---
 
 def today_str() -> str:
     return datetime.utcnow().strftime("%Y-%m-%d")
 
 
-def last_7_days() -> list:
-    """Список дат последних 7 дней (включая сегодня), строками."""
+def last_7_days() -> list[str]:
     days = []
     today = datetime.utcnow().date()
     for i in range(7):
@@ -53,8 +44,7 @@ def last_7_days() -> list:
     return list(reversed(days))
 
 
-def set_log_for_today(habit_id: str, status: str):
-    """Сохраняем (или обновляем) лог по привычке за сегодня."""
+def set_log_for_today(habit_id: str, status: str) -> None:
     d = today_str()
     for entry in user_state["logs"]:
         if entry["date"] == d and entry["habit_id"] == habit_id:
@@ -64,7 +54,6 @@ def set_log_for_today(habit_id: str, status: str):
 
 
 def compute_stats():
-    """Считаем статистику за последние 7 дней по выбранным привычкам."""
     days = last_7_days()
     stats = {}
 
@@ -78,14 +67,12 @@ def compute_stats():
     for habit_id in user_state["habits"]:
         best_streak = 0
         current_streak = 0
-
         for d in days:
             day_log = None
             for entry in user_state["logs"]:
                 if entry["date"] == d and entry["habit_id"] == habit_id:
                     day_log = entry
                     break
-
             if day_log and day_log["status"] == "done":
                 stats[habit_id]["total_done"] += 1
                 current_streak += 1
@@ -93,39 +80,36 @@ def compute_stats():
                     best_streak = current_streak
             else:
                 current_streak = 0
-
         stats[habit_id]["best_streak"] = best_streak
 
     return stats
 
 
 def habits_keyboard():
-    """Клавиатура выбора привычек (до 3 штук)."""
     buttons = []
     current = set(user_state["habits"])
-
     for habit_id, label in HABITS.items():
         selected = "✅ " if habit_id in current else ""
-        buttons.append([
-            InlineKeyboardButton(
-                f"{selected}{label}",
-                callback_data=f"toggle_{habit_id}",
-            )
-        ])
-
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    f"{selected}{label}",
+                    callback_data=f"toggle_{habit_id}",
+                )
+            ]
+        )
     buttons.append([InlineKeyboardButton("Готово ✅", callback_data="done_habits")])
     return InlineKeyboardMarkup(buttons)
 
 
 def today_keyboard():
-    """Клавиатура чек-ина за сегодня по выбранным привычкам."""
     buttons = []
     d = today_str()
 
     for habit_id in user_state["habits"]:
         label = HABITS[habit_id]
-
         status_text = ""
+
         for entry in user_state["logs"]:
             if entry["date"] == d and entry["habit_id"] == habit_id:
                 if entry["status"] == "done":
@@ -142,14 +126,12 @@ def today_keyboard():
         buttons.append(row)
 
         if status_text:
-            buttons.append([
-                InlineKeyboardButton(status_text, callback_data="noop")
-            ])
+            buttons.append(
+                [InlineKeyboardButton(status_text, callback_data="noop")]
+            )
 
     return InlineKeyboardMarkup(buttons)
 
-
-# --- ХЭНДЛЕРЫ БОТА ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
@@ -206,11 +188,9 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "noop":
         return
 
-    # Переключение привычек
     if data.startswith("toggle_"):
         habit_id = data.split("toggle_")[1]
         current = user_state["habits"]
-
         if habit_id in current:
             current.remove(habit_id)
         else:
@@ -229,7 +209,6 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Завершение выбора привычек
     if data == "done_habits":
         if not user_state["habits"]:
             await query.edit_message_text(
@@ -248,9 +227,8 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text)
         return
 
-    # Чек-ин за сегодня
     if data.startswith("today_"):
-        _, habit_id, status = data.split("_")  # today_<habit>_done|skipped
+        _, habit_id, status = data.split("_")
         if habit_id not in HABITS:
             return
 
@@ -263,31 +241,14 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_reply_markup(reply_markup=today_keyboard())
         except Exception as e:
             logger.warning("Ошибка при обновлении клавиатуры today: %s", e)
-
         return
 
 
-# --- ЗАПУСК ПРИЛОЖЕНИЯ С ВЕБХУКОМ ---
-
-application: Application | None = None
-
-
-async def on_startup(app_telegram: Application):
-    """Вызывается после инициализации приложения — ставим webhook."""
-    webhook_url = WEBHOOK_BASE_URL + f"/webhook/{TELEGRAM_TOKEN}"
-    logger.info("Setting webhook to %s", webhook_url)
-    await app_telegram.bot.set_webhook(url=webhook_url)
-
-
 def main():
-    global application
-
     if not TELEGRAM_TOKEN:
         raise RuntimeError("TELEGRAM_TOKEN is not set")
-    if not WEBHOOK_BASE_URL:
-        raise RuntimeError("WEBHOOK_BASE_URL is not set")
 
-    application = (
+    application: Application = (
         ApplicationBuilder()
         .token(TELEGRAM_TOKEN)
         .build()
@@ -298,13 +259,7 @@ def main():
     application.add_handler(CommandHandler("stats", stats))
     application.add_handler(CallbackQueryHandler(handle_callbacks))
 
-    application.post_init = on_startup
-
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=int(os.environ.get("PORT", "10000")),
-        webhook_url=WEBHOOK_BASE_URL + f"/webhook/{TELEGRAM_TOKEN}",
-    )
+    application.run_polling()
 
 
 if __name__ == "__main__":
